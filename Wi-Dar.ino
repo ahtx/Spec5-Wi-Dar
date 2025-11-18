@@ -690,35 +690,47 @@ function drawRadar() {
   
   // Top left: Contact count
   const contactCount = tracks.size;
-  ctx.fillText('╔═══════════════╗', 10, 20);
-  ctx.fillText('║ CONTACTS: ' + String(contactCount).padStart(3, '0') + ' ║', 10, 35);
-  ctx.fillText('╚═══════════════╝', 10, 50);
+  const contactStr = 'CONTACTS: ' + String(contactCount).padStart(3, '0');
+  const contactWidth = contactStr.length + 2;
+  ctx.fillText('╔' + '═'.repeat(contactWidth) + '╗', 10, 20);
+  ctx.fillText('║ ' + contactStr + ' ║', 10, 35);
+  ctx.fillText('╚' + '═'.repeat(contactWidth) + '╝', 10, 50);
   
   // Bottom left: Unique SSIDs
-  ctx.fillText('╔═══════════════╗', 10, canvas.height - 50);
-  ctx.fillText('║ UNIQUE: ' + String(totalUniqueSSIDs.size).padStart(5, '0') + ' ║', 10, canvas.height - 35);
-  ctx.fillText('╚═══════════════╝', 10, canvas.height - 20);
+  const uniqueStr = 'UNIQUE: ' + String(totalUniqueSSIDs.size).padStart(5, '0');
+  const uniqueWidth = uniqueStr.length + 2;
+  ctx.fillText('╔' + '═'.repeat(uniqueWidth) + '╗', 10, canvas.height - 50);
+  ctx.fillText('║ ' + uniqueStr + ' ║', 10, canvas.height - 35);
+  ctx.fillText('╚' + '═'.repeat(uniqueWidth) + '╝', 10, canvas.height - 20);
   
   // Bottom right: Live time
   const now = new Date();
-  const timeStr = now.toLocaleTimeString();
-  ctx.fillText('╔═══════════════╗', canvas.width - 170, canvas.height - 50);
-  ctx.fillText('║ TIME: ' + timeStr + ' ║', canvas.width - 170, canvas.height - 35);
-  ctx.fillText('╚═══════════════╝', canvas.width - 170, canvas.height - 20);
+  const timeStr = 'TIME: ' + now.toLocaleTimeString();
+  const timeWidth = timeStr.length + 2;
+  const timeX = canvas.width - (timeWidth + 2) * 8.4 - 10;
+  ctx.fillText('╔' + '═'.repeat(timeWidth) + '╗', timeX, canvas.height - 50);
+  ctx.fillText('║ ' + timeStr + ' ║', timeX, canvas.height - 35);
+  ctx.fillText('╚' + '═'.repeat(timeWidth) + '╝', timeX, canvas.height - 20);
   
   // Top right: Tagged warning (if active)
   if (taggedWarning && (Date.now() - taggedWarning.timestamp < 4000)) {
     ctx.fillStyle = '#f00';
     ctx.font = 'bold 16px monospace';
-    ctx.fillText('╔═══════════════════════╗', canvas.width - 250, 20);
-    ctx.fillText('║ ⚠ TAGGED CONTACT ⚠  ║', canvas.width - 250, 40);
-    ctx.fillText('║ ' + taggedWarning.name.substring(0, 19).padEnd(19, ' ') + ' ║', canvas.width - 250, 60);
-    ctx.fillText('╚═══════════════════════╝', canvas.width - 250, 80);
+    const warningLine1 = '⚠ TAGGED CONTACT ⚠';
+    const warningLine2 = taggedWarning.name.substring(0, 19);
+    const warningWidth = Math.max(warningLine1.length, warningLine2.length) + 2;
+    const warningX = canvas.width - (warningWidth + 2) * 9.6 - 10;
+    ctx.fillText('╔' + '═'.repeat(warningWidth) + '╗', warningX, 20);
+    ctx.fillText('║ ' + warningLine1.padEnd(warningWidth, ' ') + ' ║', warningX, 40);
+    ctx.fillText('║ ' + warningLine2.padEnd(warningWidth, ' ') + ' ║', warningX, 60);
+    ctx.fillText('╚' + '═'.repeat(warningWidth) + '╝', warningX, 80);
   } else if (taggedWarning && (Date.now() - taggedWarning.timestamp >= 4000)) {
     taggedWarning = null;
   }
   
-  requestAnimationFrame(drawRadar);
+  if (document.getElementById('radar-view').classList.contains('active')) {
+    requestAnimationFrame(drawRadar);
+  }
 }
 
 // Fixed signal strength graph
@@ -947,6 +959,11 @@ document.querySelectorAll('.tab').forEach(tab => {
     
     tab.classList.add('active');
     document.getElementById(tab.dataset.tab + '-view').classList.add('active');
+    
+    // Resume radar animation if switching to radar tab
+    if (tab.dataset.tab === 'radar') {
+      drawRadar();
+    }
   });
 });
 
