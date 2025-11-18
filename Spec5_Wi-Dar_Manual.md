@@ -8,11 +8,17 @@
 
 ---
 
+## NOTICE
+
+This device is provided without any warranty, express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, or non-infringement. It is supplied solely for educational, research, and testing purposes, intended for use by security professionals, network analysts, academic institutions, and authorized government agencies.
+
+Use of this device must comply with all applicable local, state, and federal laws. The manufacturer and distributors disclaim all liability for any misuse or unlawful activity involving this product.
+
 ## 1. Introduction
 
-The **Spec5 Wi-Dar** is an air force-grade, portable WiFi intelligence and surveillance system integrated into a compact USB dongle. Designed for security professionals, network analysts, and government agencies, the Wi-Dar provides real-time situational awareness of the 2.4 GHz WiFi spectrum.
+The **Spec5 Wi-Dar** is a portable WiFi intelligence and surveillance system integrated into a compact USB dongle. It provides real-time situational awareness of the 2.4 GHz WiFi spectrum.
 
-Its powerful web-based interface, inspired by tactical military systems, delivers a clear and immediate operational picture, allowing for rapid detection, identification, and tracking of WiFi access points (APs). The system is entirely self-contained, requiring only a standard 5V USB power source to create its own secure WiFi network for interface access.
+The device features an integrated, self-hosted web-based interface, inspired by tactical military systems, and delivers a clear and immediate operational picture. The goal is to allow for rapid detection, identification, and tracking of WiFi access points (APs) as they enter and exit range. The system is entirely self-contained, requiring only a standard 5V USB power source to create its own secure WiFi network for interface access.
 
 This manual provides a comprehensive overview of the Spec5 Wi-Dar device, its features, and operational procedures.
 
