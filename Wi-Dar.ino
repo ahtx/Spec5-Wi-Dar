@@ -713,18 +713,18 @@ function drawRadar() {
   ctx.fillText('╚' + '═'.repeat(timeWidth) + '╝', timeX, canvas.height - 20);
   
   // Top right: Tagged warning (if active)
-  if (taggedWarning && (Date.now() - taggedWarning.timestamp < 4000)) {
+  if (taggedWarning && (Date.now() - taggedWarning.timestamp < 10000)) {
     ctx.fillStyle = '#f00';
     ctx.font = 'bold 16px monospace';
     const warningLine1 = '⚠ TAGGED CONTACT ⚠';
     const warningLine2 = taggedWarning.name.substring(0, 19);
-    const warningWidth = Math.max(warningLine1.length, warningLine2.length) + 2;
-    const warningX = canvas.width - (warningWidth + 2) * 9.6 - 10;
-    ctx.fillText('╔' + '═'.repeat(warningWidth) + '╗', warningX, 20);
+    const warningWidth = Math.max(warningLine1.length, warningLine2.length);
+    const warningX = canvas.width - (warningWidth + 4) * 9.6 - 10;
+    ctx.fillText('╔' + '═'.repeat(warningWidth + 2) + '╗', warningX, 20);
     ctx.fillText('║ ' + warningLine1.padEnd(warningWidth, ' ') + ' ║', warningX, 40);
     ctx.fillText('║ ' + warningLine2.padEnd(warningWidth, ' ') + ' ║', warningX, 60);
-    ctx.fillText('╚' + '═'.repeat(warningWidth) + '╝', warningX, 80);
-  } else if (taggedWarning && (Date.now() - taggedWarning.timestamp >= 4000)) {
+    ctx.fillText('╚' + '═'.repeat(warningWidth + 2) + '╝', warningX, 80);
+  } else if (taggedWarning && (Date.now() - taggedWarning.timestamp >= 10000)) {
     taggedWarning = null;
   }
   
