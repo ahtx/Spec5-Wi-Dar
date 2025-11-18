@@ -346,7 +346,16 @@ body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hid
 </table>
 </div>
 </div>
-<div id="message-log"></div>
+<div style="background:rgba(0,51,0,0.3);padding:10px;border:1px solid #0f0;margin:10px 0">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+<label style="color:#0f0;font:12px monospace;white-space:nowrap">SEARCH:</label>
+<input type="text" id="log-search" placeholder="Search logs..." style="flex:1;background:#001100;color:#0f0;border:1px solid #0f0;padding:5px;font:12px monospace" onkeyup="searchLog(event)">
+<button onclick="prevMatch()" style="background:#003300;color:#0f0;border:1px solid #0f0;padding:5px 15px;font:12px monospace;cursor:pointer">◀</button>
+<button onclick="nextMatch()" style="background:#003300;color:#0f0;border:1px solid #0f0;padding:5px 15px;font:12px monospace;cursor:pointer">▶</button>
+<span id="match-count" style="color:#0ff;font:12px monospace;min-width:80px"></span>
+</div>
+<div id="message-log" style="max-height:200px;overflow-y:auto;background:#000a00;padding:5px;border:1px solid #0f0"></div>
+</div>
 <div id="shortcuts-help">
 <div style="color:#0ff;font-weight:bold;margin-bottom:10px">KEYBOARD SHORTCUTS</div>
 <div>SPACE - Pause/Resume</div>
@@ -1042,7 +1051,7 @@ let currentMatchIndex = -1;
 
 function searchLog(event) {
   const searchTerm = document.getElementById('log-search').value.toLowerCase();
-  const logMessages = document.getElementById('log-messages');
+  const logMessages = document.getElementById('message-log');
   const messages = logMessages.querySelectorAll('.log-entry');
   
   // Clear previous highlights
@@ -1085,7 +1094,7 @@ function searchLog(event) {
 function highlightMatch() {
   if (currentMatchIndex < 0 || currentMatchIndex >= searchMatches.length) return;
   
-  const logMessages = document.getElementById('log-messages');
+  const logMessages = document.getElementById('message-log');
   const messages = logMessages.querySelectorAll('.log-entry');
   
   // Clear all highlights
