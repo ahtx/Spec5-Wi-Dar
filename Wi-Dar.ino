@@ -227,6 +227,37 @@ body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hid
 .log-stable{border-left-color:#0f0}
 #shortcuts-help{position:fixed;top:100px;right:20px;background:rgba(0,20,0,0.9);border:2px solid #0f0;padding:15px;display:none;z-index:2000;font-size:11px}
 #shortcuts-help.show{display:block}
+
+    @media (max-width: 768px) {
+      header img {
+        height: 30px !important;
+        max-width: 100px !important;
+      }
+      .tabs {
+        flex-wrap: wrap;
+      }
+      .tab {
+        font-size: 11px !important;
+        padding: 8px 10px !important;
+      }
+    }
+
+    @media (max-width: 768px) {
+      header img {
+        height: 30px !important;
+        max-width: 120px !important;
+      }
+      header div {
+        font-size: 14px !important;
+      }
+      .tabs {
+        flex-wrap: wrap;
+      }
+      .tab {
+        font-size: 11px !important;
+        padding: 8px 10px !important;
+      }
+    }
 </style>
 </head>
 <body>
@@ -247,9 +278,9 @@ body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hid
 </div>
 <div id="tabs">
 <div class="tab active" data-tab="radar">RADAR</div>
-<div class="tab" data-tab="signal">SIGNAL STRENGTH</div>
+<div class="tab" data-tab="signal">SIGNAL</div>
 <div class="tab" data-tab="config">CONFIGURATION</div>
-<div class="tab" data-tab="tags">TAGGED CONTACTS</div>
+<div class="tab" data-tab="tags">TAGS</div>
 </div>
 <div id="content">
 <div id="radar-view" class="view active">
@@ -1003,6 +1034,89 @@ scanWiFi();
 drawRadar();
 logMessage('SPEC5 WI-DAR SYSTEM INITIALIZED', 'normal');
 logMessage('TACTICAL WIFI TRACKING ACTIVE', 'normal');
+
+
+// Log search functionality
+let searchMatches = [];
+let currentMatchIndex = -1;
+
+function searchLog(event) {
+  const searchTerm = document.getElementById('log-search').value.toLowerCase();
+  const logMessages = document.getElementById('log-messages');
+  const messages = logMessages.querySelectorAll('.log-entry');
+  
+  // Clear previous highlights
+  messages.forEach(msg => {
+    msg.style.backgroundColor = '';
+    msg.style.border = '';
+  });
+  
+  searchMatches = [];
+  currentMatchIndex = -1;
+  
+  if (searchTerm === '') {
+    document.getElementById('match-count').textContent = '';
+    return;
+  }
+  
+  // Find matches
+  messages.forEach((msg, index) => {
+    if (msg.textContent.toLowerCase().includes(searchTerm)) {
+      searchMatches.push(index);
+    }
+  });
+  
+  // Update match count
+  if (searchMatches.length > 0) {
+    document.getElementById('match-count').textContent = `${searchMatches.length} match${searchMatches.length > 1 ? 'es' : ''}`;
+    // Jump to first match
+    currentMatchIndex = 0;
+    highlightMatch();
+  } else {
+    document.getElementById('match-count').textContent = 'No matches';
+  }
+  
+  // Allow Enter key to go to next match
+  if (event.key === 'Enter' && searchMatches.length > 0) {
+    nextMatch();
+  }
+}
+
+function highlightMatch() {
+  if (currentMatchIndex < 0 || currentMatchIndex >= searchMatches.length) return;
+  
+  const logMessages = document.getElementById('log-messages');
+  const messages = logMessages.querySelectorAll('.log-entry');
+  
+  // Clear all highlights
+  messages.forEach(msg => {
+    msg.style.backgroundColor = '';
+    msg.style.border = '';
+  });
+  
+  // Highlight current match
+  const matchIndex = searchMatches[currentMatchIndex];
+  const matchedMsg = messages[matchIndex];
+  matchedMsg.style.backgroundColor = 'rgba(0,255,0,0.2)';
+  matchedMsg.style.border = '1px solid #0f0';
+  matchedMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  
+  // Update count display
+  document.getElementById('match-count').textContent = `${currentMatchIndex + 1} of ${searchMatches.length}`;
+}
+
+function nextMatch() {
+  if (searchMatches.length === 0) return;
+  currentMatchIndex = (currentMatchIndex + 1) % searchMatches.length;
+  highlightMatch();
+}
+
+function prevMatch() {
+  if (searchMatches.length === 0) return;
+  currentMatchIndex = (currentMatchIndex - 1 + searchMatches.length) % searchMatches.length;
+  highlightMatch();
+}
+
 </script>
 </body>
 </html>
