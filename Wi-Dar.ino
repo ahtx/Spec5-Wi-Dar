@@ -330,6 +330,7 @@ body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hid
 // Global state
 const tracks = new Map();
 const sessionLog = [];
+const signalHistory = new Map(); // Store signal history for graph
 let config = {trackHistory:5,validationThreshold:3,scanInterval:3,proximityAlert:5,missionProfile:'perimeter'};
 let taggedContacts = [];
 let isPaused = false;
@@ -337,6 +338,8 @@ let isMuted = false;
 let scanCount = 0;
 let successCount = 0;
 let lastScanTime = 0;
+let totalUniqueSSIDs = new Set();
+let taggedWarning = null; // {ssid, name, timestamp}
 
 // Audio context for alerts
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -372,26 +375,22 @@ function matchesPattern(ssid, pattern) {
 }
 
 function getThreatLevel(track) {
-  // Check if tagged
   for (const tag of taggedContacts) {
     if (matchesPattern(track.ssid, tag.pattern)) {
       return track.rssi > -50 ? 'hostile' : 'suspicious';
     }
   }
   
-  // Check for spoofing (simplified - would need more logic)
   const knownSSIDs = Array.from(tracks.values()).filter(t => t.isConfirmed).map(t => t.ssid);
   const duplicates = knownSSIDs.filter(s => s === track.ssid).length;
   if (duplicates > 1 && track.rssi > -40) return 'suspicious';
   
-  // Check signal variance (movement detection)
   if (track.history.length >= 3) {
     const rssis = track.history.map(h => h.rssi);
     const variance = rssis.reduce((sum, r) => sum + Math.pow(r - track.rssi, 2), 0) / rssis.length;
-    if (variance > 100) return 'suspicious'; // High variance = moving
+    if (variance > 100) return 'suspicious';
   }
   
-  // Default classification
   if (track.isConfirmed) {
     return track.rssi > -60 ? 'neutral' : 'passive';
   }
@@ -437,7 +436,6 @@ async function scanWiFi() {
     successCount++;
     lastScanTime = Date.now();
     
-    // Update diagnostics
     document.getElementById('diag-heap').textContent = (data.freeHeap / 1024).toFixed(1) + ' KB';
     document.getElementById('diag-temp').textContent = data.temperature.toFixed(1) + ' °C';
     document.getElementById('diag-success').textContent = ((successCount / scanCount) * 100).toFixed(1) + '%';
@@ -452,12 +450,22 @@ async function scanWiFi() {
       String(secs).padStart(2,'0');
     
     const currentSSIDs = new Set();
+    const currentTime = Date.now();
     
     data.networks.forEach(net => {
       currentSSIDs.add(net.bssid);
+      totalUniqueSSIDs.add(net.ssid);
+      
+      // Update signal history for graph
+      if (!signalHistory.has(net.bssid)) {
+        signalHistory.set(net.bssid, []);
+      }
+      const history = signalHistory.get(net.bssid);
+      history.push({rssi: net.rssi, timestamp: currentTime, ssid: net.ssid});
+      // Keep last 60 readings (about 3 minutes at 3s interval)
+      if (history.length > 60) history.shift();
       
       if (!tracks.has(net.bssid)) {
-        // New track
         tracks.set(net.bssid, {
           ssid: net.ssid,
           rssi: net.rssi,
@@ -482,10 +490,10 @@ async function scanWiFi() {
             track.isConfirmed = true;
             logMessage(`NEW TRANSPONDER IDENTIFIED: ${track.ssid} | RSSI: ${track.rssi} dBm | RNG: ${track.distance.toFixed(1)}m`, 'new');
             
-            // Check if tagged
             for (const tag of taggedContacts) {
               if (matchesPattern(track.ssid, tag.pattern)) {
                 logMessage(`⚠ TAGGED CONTACT APPEARED: ${tag.name} (${track.ssid}) | RSSI: ${track.rssi} dBm`, 'tagged');
+                taggedWarning = {ssid: track.ssid, name: tag.name, timestamp: Date.now()};
                 if (tag.soundEnabled) {
                   playAlert(800, 300);
                   setTimeout(() => playAlert(800, 300), 400);
@@ -494,7 +502,6 @@ async function scanWiFi() {
               }
             }
             
-            // Proximity alert
             if (track.distance < config.proximityAlert) {
               logMessage(`⚠ PROXIMITY ALERT: ${track.ssid} within ${track.distance.toFixed(1)}m`, 'tagged');
               playAlert(1000, 200);
@@ -502,7 +509,6 @@ async function scanWiFi() {
           }
         }
         
-        // Add to history
         track.history.push({rssi: track.rssi, timestamp: Date.now()});
         if (track.history.length > config.trackHistory) {
           track.history.shift();
@@ -510,19 +516,18 @@ async function scanWiFi() {
       }
     });
     
-    // Remove lost tracks
     tracks.forEach((track, bssid) => {
       if (!currentSSIDs.has(bssid)) {
         const age = Date.now() - track.lastSeen;
-        if (age > 30000) { // 30 seconds
+        if (age > 30000) {
           logMessage(`TRANSPONDER LOST: ${track.ssid} | Last seen: ${new Date(track.lastSeen).toLocaleTimeString()}`, 'lost');
           tracks.delete(bssid);
+          signalHistory.delete(bssid);
         }
       }
     });
     
     updateHUD();
-    drawRadar();
     drawSignalGraph();
     
   } catch (e) {
@@ -532,7 +537,7 @@ async function scanWiFi() {
   setTimeout(scanWiFi, config.scanInterval * 1000);
 }
 
-// Radar rendering
+// Radar rendering with enhancements
 function drawRadar() {
   const canvas = document.getElementById('radar-canvas');
   const ctx = canvas.getContext('2d');
@@ -542,13 +547,14 @@ function drawRadar() {
   
   const cx = canvas.width / 2;
   const cy = canvas.height / 2;
-  const radius = Math.min(cx, cy) - 40;
+  const radius = Math.min(cx, cy) - 80;
   
-  // Clear
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   
-  // Draw range rings
+  // Draw range rings with glow
+  ctx.shadowBlur = 15;
+  ctx.shadowColor = '#0f0';
   ctx.strokeStyle = '#003300';
   ctx.lineWidth = 1;
   for (let i = 1; i <= 4; i++) {
@@ -556,67 +562,67 @@ function drawRadar() {
     ctx.arc(cx, cy, radius * i / 4, 0, Math.PI * 2);
     ctx.stroke();
     
-    // Range labels
+    ctx.shadowBlur = 0;
     ctx.fillStyle = '#0a0';
     ctx.font = '10px monospace';
     ctx.fillText((i * 25) + '%', cx + radius * i / 4 + 5, cy);
+    ctx.shadowBlur = 15;
   }
   
-  // Draw azimuth markers
+  // Draw 8-slice azimuth lines with glow
+  ctx.strokeStyle = '#003300';
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * 45) * Math.PI / 180;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + radius * Math.cos(angle - Math.PI/2), cy + radius * Math.sin(angle - Math.PI/2));
+    ctx.stroke();
+  }
+  
+  ctx.shadowBlur = 0;
+  
+  // Draw azimuth markers (8 directions)
   ctx.fillStyle = '#0f0';
   ctx.font = '12px monospace';
-  ctx.fillText('N', cx - 5, cy - radius - 10);
-  ctx.fillText('E', cx + radius + 10, cy + 5);
-  ctx.fillText('S', cx - 5, cy + radius + 20);
-  ctx.fillText('W', cx - radius - 20, cy + 5);
+  const labels = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * 45) * Math.PI / 180;
+    const x = cx + (radius + 20) * Math.cos(angle - Math.PI/2);
+    const y = cy + (radius + 20) * Math.sin(angle - Math.PI/2);
+    ctx.fillText(labels[i], x - 10, y + 5);
+  }
   
-  // Draw crosshairs
-  ctx.strokeStyle = '#003300';
-  ctx.beginPath();
-  ctx.moveTo(cx, cy - radius);
-  ctx.lineTo(cx, cy + radius);
-  ctx.moveTo(cx - radius, cy);
-  ctx.lineTo(cx + radius, cy);
-  ctx.stroke();
-  
-  // Draw sweep line
+  // Draw sweep line with enhanced glow
   const sweepAngle = (Date.now() / 20) % 360;
-  ctx.strokeStyle = 'rgba(0,255,0,0.3)';
-  ctx.lineWidth = 2;
+  ctx.shadowBlur = 30;
+  ctx.shadowColor = '#0f0';
+  ctx.strokeStyle = 'rgba(0,255,0,0.6)';
+  ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.moveTo(cx, cy);
   const sweepX = cx + radius * Math.cos((sweepAngle - 90) * Math.PI / 180);
   const sweepY = cy + radius * Math.sin((sweepAngle - 90) * Math.PI / 180);
   ctx.lineTo(sweepX, sweepY);
   ctx.stroke();
+  ctx.shadowBlur = 0;
   
   // Draw tracks
   tracks.forEach(track => {
     if (!track.isConfirmed) return;
     
-    // Position based on RSSI (strong = center, weak = edge)
-    const normalizedRSSI = (track.rssi + 100) / 70; // -100 to -30 dBm
+    const normalizedRSSI = (track.rssi + 100) / 70;
     const distFromCenter = radius * (1 - Math.max(0, Math.min(1, normalizedRSSI)));
     
-    // Random but stable angle based on BSSID
     const hash = track.bssid.split(':').reduce((sum, byte) => sum + parseInt(byte, 16), 0);
     const angle = (hash % 360) * Math.PI / 180;
     
     const x = cx + distFromCenter * Math.cos(angle);
     const y = cy + distFromCenter * Math.sin(angle);
     
-    // Determine threat level and color
     const threat = getThreatLevel(track);
-    const colors = {
-      hostile: '#f00',
-      suspicious: '#f80',
-      neutral: '#ff0',
-      friendly: '#0f0',
-      passive: '#888'
-    };
+    const colors = {hostile: '#f00', suspicious: '#f80', neutral: '#ff0', friendly: '#0f0', passive: '#888'};
     const color = colors[threat] || '#0f0';
     
-    // Draw track trail
     if (track.history.length > 1) {
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
@@ -635,7 +641,6 @@ function drawRadar() {
       ctx.setLineDash([]);
     }
     
-    // Draw track dots (history with fade)
     for (let i = 0; i < track.history.length; i++) {
       const h = track.history[i];
       const age = track.history.length - i;
@@ -653,13 +658,11 @@ function drawRadar() {
       ctx.fill();
     }
     
-    // Draw current position (IFF symbol)
     ctx.fillStyle = color;
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     
     if (threat === 'hostile') {
-      // Triangle
       ctx.beginPath();
       ctx.moveTo(x, y - 8);
       ctx.lineTo(x - 7, y + 6);
@@ -667,16 +670,13 @@ function drawRadar() {
       ctx.closePath();
       ctx.fill();
     } else if (threat === 'friendly') {
-      // Square
       ctx.fillRect(x - 6, y - 6, 12, 12);
     } else {
-      // Circle
       ctx.beginPath();
       ctx.arc(x, y, 6, 0, Math.PI * 2);
       ctx.fill();
     }
     
-    // Draw label
     ctx.fillStyle = color;
     ctx.font = '10px monospace';
     const bearing = Math.floor((angle * 180 / Math.PI + 90) % 360);
@@ -684,10 +684,44 @@ function drawRadar() {
     ctx.fillText(label, x + 10, y - 10);
   });
   
+  // ASCII art corner displays
+  ctx.font = '14px monospace';
+  ctx.fillStyle = '#0f0';
+  
+  // Top left: Contact count
+  const contactCount = tracks.size;
+  ctx.fillText('╔═══════════════╗', 10, 20);
+  ctx.fillText('║ CONTACTS: ' + String(contactCount).padStart(3, '0') + ' ║', 10, 35);
+  ctx.fillText('╚═══════════════╝', 10, 50);
+  
+  // Bottom left: Unique SSIDs
+  ctx.fillText('╔═══════════════╗', 10, canvas.height - 50);
+  ctx.fillText('║ UNIQUE: ' + String(totalUniqueSSIDs.size).padStart(5, '0') + ' ║', 10, canvas.height - 35);
+  ctx.fillText('╚═══════════════╝', 10, canvas.height - 20);
+  
+  // Bottom right: Live time
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString();
+  ctx.fillText('╔═══════════════╗', canvas.width - 170, canvas.height - 50);
+  ctx.fillText('║ TIME: ' + timeStr + ' ║', canvas.width - 170, canvas.height - 35);
+  ctx.fillText('╚═══════════════╝', canvas.width - 170, canvas.height - 20);
+  
+  // Top right: Tagged warning (if active)
+  if (taggedWarning && (Date.now() - taggedWarning.timestamp < 4000)) {
+    ctx.fillStyle = '#f00';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('╔═══════════════════════╗', canvas.width - 250, 20);
+    ctx.fillText('║ ⚠ TAGGED CONTACT ⚠  ║', canvas.width - 250, 40);
+    ctx.fillText('║ ' + taggedWarning.name.substring(0, 19).padEnd(19, ' ') + ' ║', canvas.width - 250, 60);
+    ctx.fillText('╚═══════════════════════╝', canvas.width - 250, 80);
+  } else if (taggedWarning && (Date.now() - taggedWarning.timestamp >= 4000)) {
+    taggedWarning = null;
+  }
+  
   requestAnimationFrame(drawRadar);
 }
 
-// Signal strength graph
+// Fixed signal strength graph
 function drawSignalGraph() {
   const canvas = document.getElementById('signal-canvas');
   const ctx = canvas.getContext('2d');
@@ -698,57 +732,103 @@ function drawSignalGraph() {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   
+  // Get all current signal histories
+  const activeHistories = Array.from(signalHistory.entries())
+    .filter(([bssid, history]) => history.length > 0)
+    .slice(0, 7); // Limit to 7 for visibility
+  
+  if (activeHistories.length === 0) return;
+  
+  // Find min/max RSSI for dynamic scaling
+  let minRSSI = -100;
+  let maxRSSI = -30;
+  activeHistories.forEach(([bssid, history]) => {
+    history.forEach(h => {
+      minRSSI = Math.min(minRSSI, h.rssi);
+      maxRSSI = Math.max(maxRSSI, h.rssi);
+    });
+  });
+  
+  // Add padding
+  const padding = (maxRSSI - minRSSI) * 0.1 || 10;
+  minRSSI -= padding;
+  maxRSSI += padding;
+  
+  const leftMargin = 60;
+  const rightMargin = 20;
+  const topMargin = 30;
+  const bottomMargin = 40;
+  const graphWidth = canvas.width - leftMargin - rightMargin;
+  const graphHeight = canvas.height - topMargin - bottomMargin;
+  
   // Draw grid
   ctx.strokeStyle = '#003300';
   ctx.lineWidth = 1;
   for (let i = 0; i <= 10; i++) {
-    const y = canvas.height * i / 10;
+    const y = topMargin + graphHeight * i / 10;
     ctx.beginPath();
-    ctx.moveTo(50, y);
-    ctx.lineTo(canvas.width, y);
+    ctx.moveTo(leftMargin, y);
+    ctx.lineTo(canvas.width - rightMargin, y);
     ctx.stroke();
   }
   
-  // Y-axis labels (RSSI)
+  // Y-axis labels
   ctx.fillStyle = '#0f0';
-  ctx.font = '10px monospace';
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'right';
   for (let i = 0; i <= 10; i++) {
-    const rssi = -100 + i * 7;
-    const y = canvas.height - (canvas.height * i / 10);
-    ctx.fillText(rssi.toString(), 5, y + 3);
+    const rssi = maxRSSI - (maxRSSI - minRSSI) * i / 10;
+    const y = topMargin + graphHeight * i / 10;
+    ctx.fillText(rssi.toFixed(0) + ' dBm', leftMargin - 10, y + 4);
   }
   
+  // Title
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('SIGNAL STRENGTH OVER TIME', canvas.width / 2, 20);
+  
   // X-axis label
-  ctx.fillText('Time', canvas.width / 2, canvas.height - 5);
+  ctx.fillStyle = '#0f0';
+  ctx.font = '11px monospace';
+  ctx.fillText('Time (last 60 readings)', canvas.width / 2, canvas.height - 10);
   
   // Draw signal lines
   const colors = ['#0f0', '#0ff', '#ff0', '#f80', '#f0f', '#0af', '#fa0'];
-  let colorIdx = 0;
   
-  tracks.forEach(track => {
-    if (!track.isConfirmed || track.history.length < 2) return;
-    
-    const color = colors[colorIdx % colors.length];
-    colorIdx++;
+  activeHistories.forEach(([bssid, history], idx) => {
+    const color = colors[idx % colors.length];
     
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.beginPath();
     
-    for (let i = 0; i < track.history.length; i++) {
-      const h = track.history[i];
-      const x = 50 + (canvas.width - 50) * i / (config.trackHistory - 1);
-      const y = canvas.height - ((h.rssi + 100) / 70) * canvas.height;
+    let started = false;
+    for (let i = 0; i < history.length; i++) {
+      const h = history[i];
+      const x = leftMargin + graphWidth * i / Math.max(1, history.length - 1);
+      const normalizedRSSI = (h.rssi - minRSSI) / (maxRSSI - minRSSI);
+      const y = topMargin + graphHeight * (1 - normalizedRSSI);
       
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
     }
     ctx.stroke();
     
     // Legend
     ctx.fillStyle = color;
-    ctx.fillText(`${track.ssid.substring(0, 12)}: ${track.rssi}dBm`, canvas.width - 200, 20 + colorIdx * 15);
+    ctx.textAlign = 'left';
+    ctx.font = '11px monospace';
+    const lastRSSI = history[history.length - 1].rssi;
+    const ssid = history[history.length - 1].ssid;
+    ctx.fillText(`${ssid.substring(0, 15)}: ${lastRSSI} dBm`, canvas.width - 220, topMargin + idx * 18);
   });
+  
+  ctx.textAlign = 'left';
 }
 
 // Configuration
@@ -845,7 +925,8 @@ function exportSession() {
     config: config,
     tags: taggedContacts,
     tracks: Array.from(tracks.values()),
-    log: sessionLog
+    log: sessionLog,
+    signalHistory: Array.from(signalHistory.entries())
   };
   
   const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
@@ -877,6 +958,7 @@ document.addEventListener('keydown', e => {
     logMessage(isPaused ? 'SCANNING PAUSED' : 'SCANNING RESUMED', 'normal');
   } else if (e.key === 'r' || e.key === 'R') {
     tracks.clear();
+    signalHistory.clear();
     logMessage('ALL TRACKS RESET', 'normal');
   } else if (e.key === 'm' || e.key === 'M') {
     isMuted = !isMuted;
@@ -901,6 +983,7 @@ document.addEventListener('keydown', e => {
 loadConfig();
 loadTags();
 scanWiFi();
+drawRadar();
 logMessage('SPEC5 WI-DAR SYSTEM INITIALIZED', 'normal');
 logMessage('TACTICAL WIFI TRACKING ACTIVE', 'normal');
 </script>
