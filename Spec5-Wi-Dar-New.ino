@@ -1094,10 +1094,10 @@ function prevMatch() {
 
 void setup() {
   Serial.begin(115200);
-  
+
   loadConfig();
-  
-  WiFi.mode(WIFI_AP_STA);
+
+  WiFi.mode(WIFI_MODE_AP);
   WiFi.softAP(ssid, password);
   
   Serial.println("Wi-Dar AP started");
