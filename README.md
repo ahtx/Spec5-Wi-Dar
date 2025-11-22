@@ -1,6 +1,6 @@
 # Spec5 Wi-Dar
 
-**Air Force-Grade WiFi Tracking and Threat Assessment System**
+**WiFi Tracking and Threat Assessment System**
 
 A professional tactical WiFi surveillance platform for ESP32-S3 hardware featuring real-time threat classification, track management, and comprehensive alerting capabilities.
 
