@@ -248,8 +248,8 @@ body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hid
 <div id="tabs">
 <div class="tab active" data-tab="radar">RADAR</div>
 <div class="tab" data-tab="signal">SIGNAL</div>
-<div class="tab" data-tab="config">CONFIGURATION</div>
 <div class="tab" data-tab="tags">TAGS</div>
+<div class="tab" data-tab="config">CONFIG</div>
 </div>
 <div id="content">
 <div id="radar-view" class="view active">
