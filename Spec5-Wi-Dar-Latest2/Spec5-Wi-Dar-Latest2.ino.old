@@ -1,0 +1,1125 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ArduinoJson.h>
+#include <Preferences.h>
+
+WebServer server(80);
+Preferences prefs;
+
+const char* ssid = "Wi-Dar";
+const char* password = "tactical123";
+
+// Configuration
+struct Config {
+  int trackHistory = 5;
+  int validationThreshold = 3;
+  int scanInterval = 3;
+  int proximityAlert = 5;
+  String missionProfile = "perimeter";
+} config;
+
+// Tagged contacts storage
+struct TaggedContact {
+  String name;
+  String pattern;
+  String color;
+  bool soundEnabled;
+};
+std::vector<TaggedContact> taggedContacts;
+
+void loadConfig() {
+  prefs.begin("widar", false);
+  config.trackHistory = prefs.getInt("trackHist", 5);
+  config.validationThreshold = prefs.getInt("valThresh", 3);
+  config.scanInterval = prefs.getInt("scanInt", 3);
+  config.proximityAlert = prefs.getInt("proxAlert", 5);
+  config.missionProfile = prefs.getString("profile", "perimeter");
+  
+  // Load tagged contacts
+  int tagCount = prefs.getInt("tagCount", 0);
+  for (int i = 0; i < tagCount; i++) {
+    TaggedContact tag;
+    tag.name = prefs.getString(("tagN" + String(i)).c_str(), "");
+    tag.pattern = prefs.getString(("tagP" + String(i)).c_str(), "");
+    tag.color = prefs.getString(("tagC" + String(i)).c_str(), "red");
+    tag.soundEnabled = prefs.getBool(("tagS" + String(i)).c_str(), true);
+    if (tag.name.length() > 0) {
+      taggedContacts.push_back(tag);
+    }
+  }
+  prefs.end();
+}
+
+void saveConfig() {
+  prefs.begin("widar", false);
+  prefs.putInt("trackHist", config.trackHistory);
+  prefs.putInt("valThresh", config.validationThreshold);
+  prefs.putInt("scanInt", config.scanInterval);
+  prefs.putInt("proxAlert", config.proximityAlert);
+  prefs.putString("profile", config.missionProfile);
+  
+  // Save tagged contacts
+  prefs.putInt("tagCount", taggedContacts.size());
+  for (size_t i = 0; i < taggedContacts.size(); i++) {
+    prefs.putString(("tagN" + String(i)).c_str(), taggedContacts[i].name);
+    prefs.putString(("tagP" + String(i)).c_str(), taggedContacts[i].pattern);
+    prefs.putString(("tagC" + String(i)).c_str(), taggedContacts[i].color);
+    prefs.putBool(("tagS" + String(i)).c_str(), taggedContacts[i].soundEnabled);
+  }
+  prefs.end();
+}
+
+void handleScanAPI() {
+  JsonDocument doc;
+  JsonArray networks = doc["networks"].to<JsonArray>();
+  
+  int n = WiFi.scanNetworks(false, false, false, 50);
+  
+  for (int i = 0; i < n; i++) {
+    JsonObject net = networks.add<JsonObject>();
+    net["ssid"] = WiFi.SSID(i);
+    net["rssi"] = WiFi.RSSI(i);
+    net["channel"] = WiFi.channel(i);
+    net["bssid"] = WiFi.BSSIDstr(i);
+    net["encryption"] = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? "Open" : "Encrypted";
+  }
+  
+  doc["timestamp"] = millis();
+  doc["count"] = n;
+  doc["uptime"] = millis() / 1000;
+  doc["freeHeap"] = ESP.getFreeHeap();
+  doc["temperature"] = temperatureRead();
+  
+  String json;
+  serializeJson(doc, json);
+  server.send(200, "application/json", json);
+}
+
+void handleConfigAPI() {
+  if (server.method() == HTTP_GET) {
+    JsonDocument doc;
+    doc["trackHistory"] = config.trackHistory;
+    doc["validationThreshold"] = config.validationThreshold;
+    doc["scanInterval"] = config.scanInterval;
+    doc["proximityAlert"] = config.proximityAlert;
+    doc["missionProfile"] = config.missionProfile;
+    
+    String json;
+    serializeJson(doc, json);
+    server.send(200, "application/json", json);
+  } else if (server.method() == HTTP_POST) {
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+    
+    config.trackHistory = doc["trackHistory"] | 5;
+    config.validationThreshold = doc["validationThreshold"] | 3;
+    config.scanInterval = doc["scanInterval"] | 3;
+    config.proximityAlert = doc["proximityAlert"] | 5;
+    config.missionProfile = doc["missionProfile"] | "perimeter";
+    
+    saveConfig();
+    server.send(200, "application/json", "{\"status\":\"ok\"}");
+  }
+}
+
+void handleTagsAPI() {
+  if (server.method() == HTTP_GET) {
+    JsonDocument doc;
+    JsonArray tags = doc["tags"].to<JsonArray>();
+    
+    for (const auto& tag : taggedContacts) {
+      JsonObject t = tags.add<JsonObject>();
+      t["name"] = tag.name;
+      t["pattern"] = tag.pattern;
+      t["color"] = tag.color;
+      t["sound"] = tag.soundEnabled;
+    }
+    
+    String json;
+    serializeJson(doc, json);
+    server.send(200, "application/json", json);
+  } else if (server.method() == HTTP_POST) {
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+    
+    TaggedContact tag;
+    tag.name = doc["name"].as<String>();
+    tag.pattern = doc["pattern"].as<String>();
+    tag.color = doc["color"].as<String>();
+    tag.soundEnabled = doc["sound"] | true;
+    
+    taggedContacts.push_back(tag);
+    saveConfig();
+    
+    server.send(200, "application/json", "{\"status\":\"ok\"}");
+  } else if (server.method() == HTTP_DELETE) {
+    JsonDocument doc;
+    deserializeJson(doc, server.arg("plain"));
+    
+    String name = doc["name"];
+    taggedContacts.erase(
+      std::remove_if(taggedContacts.begin(), taggedContacts.end(),
+        [&name](const TaggedContact& t) { return t.name == name; }),
+      taggedContacts.end()
+    );
+    
+    saveConfig();
+    server.send(200, "application/json", "{\"status\":\"ok\"}");
+  }
+}
+
+void handleRoot() {
+  server.send(200, "text/html", R"html(<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Spec5 Wi-Dar</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hidden;user-select:none}
+#hud{position:fixed;top:0;left:0;right:0;height:50px;background:linear-gradient(180deg,#001100,#000);border-bottom:2px solid #0f0;display:flex;justify-content:space-between;align-items:center;padding:0 20px;z-index:1000}
+#hud-left{display:flex;gap:30px}
+#hud-right{display:flex;gap:20px;font-size:12px}
+.hud-stat{display:flex;flex-direction:column;align-items:center}
+.hud-label{font-size:9px;color:#0a0}
+.hud-value{font-size:16px;font-weight:bold}
+.threat-hostile{color:#f00}
+.threat-suspicious{color:#f80}
+.threat-neutral{color:#ff0}
+.threat-friendly{color:#0f0}
+#tabs{position:fixed;top:50px;left:0;right:0;height:40px;background:#001100;border-bottom:1px solid #0f0;display:flex;z-index:999}
+.tab{flex:1;display:flex;align-items:center;justify-content:center;cursor:pointer;border-right:1px solid #003300;transition:background .2s}
+.tab:hover{background:#002200}
+.tab.active{background:#003300;border-bottom:2px solid #0ff}
+#content{position:fixed;top:90px;left:0;right:0;bottom:150px;overflow:hidden}
+.view{display:none;width:100%;height:100%}
+.view.active{display:block}
+#radar-view{position:relative}
+#radar-canvas{width:100%;height:100%;background:#000}
+#signal-view{padding:20px}
+#signal-canvas{width:100%;height:100%;background:#000;border:1px solid #0f0}
+#config-view{padding:20px;overflow-y:auto}
+.config-section{margin-bottom:30px}
+.config-section h3{color:#0ff;margin-bottom:15px;border-bottom:1px solid #0f0;padding-bottom:5px}
+.config-row{display:flex;justify-content:space-between;align-items:center;margin:10px 0;padding:8px;background:#001100;border:1px solid #003300}
+.config-row label{flex:1}
+.config-row input,.config-row select{background:#000;color:#0f0;border:1px solid #0f0;padding:5px 10px;font-family:inherit;width:150px}
+.config-row button{background:#003300;color:#0f0;border:1px solid #0f0;padding:5px 15px;cursor:pointer;font-family:inherit}
+.config-row button:hover{background:#005500}
+#tags-view{padding:20px}
+#tags-table{width:100%;border-collapse:collapse;margin-top:20px}
+#tags-table th,#tags-table td{border:1px solid #0f0;padding:10px;text-align:left}
+#tags-table th{background:#003300;color:#0ff}
+#tags-table tr:hover{background:#001100}
+.tag-color{width:20px;height:20px;border:1px solid #0f0;display:inline-block}
+.btn-delete{background:#300;color:#f00;border:1px solid #f00;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px}
+.btn-delete:hover{background:#500}
+#add-tag-form{background:#001100;border:2px solid #0f0;padding:20px;margin-bottom:20px}
+#add-tag-form input,#add-tag-form select{background:#000;color:#0f0;border:1px solid #0f0;padding:8px;margin:5px;font-family:inherit}
+#add-tag-form button{background:#003300;color:#0f0;border:1px solid #0f0;padding:8px 20px;cursor:pointer;font-family:inherit;margin:5px}
+#add-tag-form button:hover{background:#005500}
+#message-log{position:fixed;bottom:0;left:0;right:0;height:150px;background:rgba(0,10,0,0.95);border-top:2px solid #0f0;overflow-y:auto;padding:10px;font-size:12px;z-index:998}
+.log-entry{margin:3px 0;padding:3px 5px;border-left:3px solid #0f0}
+.log-new{border-left-color:#ff0;color:#ff0}
+.log-tagged{border-left-color:#f00;color:#f00;font-weight:bold}
+.log-lost{border-left-color:#666;color:#888}
+.log-stable{border-left-color:#0f0}
+#shortcuts-help{position:fixed;top:100px;right:20px;background:rgba(0,20,0,0.9);border:2px solid #0f0;padding:15px;display:none;z-index:2000;font-size:11px}
+#shortcuts-help.show{display:block}
+</style>
+</head>
+<body>
+<div id="hud">
+<div id="hud-left">
+<div style="display:flex;align-items:center;gap:10px"><svg xmlns="http://www.w3.org/2000/svg" width="60" height="30" viewBox="0 0 120 60" style="vertical-align:middle">
+<rect width="120" height="60" fill="#1a1a1a"/>
+<text x="10" y="40" font-family="monospace" font-size="24" fill="#00ff00" font-weight="bold">SPEC5</text>
+</svg><div style="font-size:18px;font-weight:bold;color:#0ff">WI-DAR</div></div>
+<div class="hud-stat"><span class="hud-label">CONTACTS</span><span class="hud-value" id="hud-total">0</span></div>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" alt="Spec5" style="height:40px;width:auto;max-width:150px;object-fit:contain"><div style="font-size:18px;font-weight:bold;color:#0ff">WI-DAR</div></div>
+<div class="hud-stat"><span class="hud-label">CONTACTS</span><span class="hud-value" id="hud-total">0</span></div>
+<div class="hud-stat"><span class="hud-label threat-hostile">HOSTILE</span><span class="hud-value threat-hostile" id="hud-hostile">0</span></div>
+<div class="hud-stat"><span class="hud-label threat-suspicious">SUSPICIOUS</span><span class="hud-value threat-suspicious" id="hud-suspicious">0</span></div>
+<div class="hud-stat"><span class="hud-label threat-neutral">NEUTRAL</span><span class="hud-value threat-neutral" id="hud-neutral">0</span></div>
+<div class="hud-stat"><span class="hud-label threat-friendly">FRIENDLY</span><span class="hud-value threat-friendly" id="hud-friendly">0</span></div>
+</div>
+<div id="hud-right">
+<div class="hud-stat"><span class="hud-label">UPTIME</span><span class="hud-value" id="hud-uptime">00:00:00</span></div>
+<div class="hud-stat"><span class="hud-label">PROFILE</span><span class="hud-value" id="hud-profile">PERIMETER</span></div>
+<div class="hud-stat"><span class="hud-label">LAST SCAN</span><span class="hud-value" id="hud-lastscan">--</span></div>
+</div>
+</div>
+<div id="tabs">
+<div class="tab active" data-tab="radar">RADAR</div>
+<div class="tab" data-tab="signal">SIGNAL</div>
+<div class="tab" data-tab="tags">TAGS</div>
+<div class="tab" data-tab="config">CONFIG</div>
+</div>
+<div id="content">
+<div id="radar-view" class="view active">
+<canvas id="radar-canvas"></canvas>
+</div>
+<div id="signal-view" class="view">
+<canvas id="signal-canvas"></canvas>
+</div>
+<div id="config-view" class="view">
+<div class="config-section">
+<h3>TRACK SETTINGS</h3>
+<div class="config-row"><label>Track History Count:</label><input type="number" id="cfg-track-hist" min="1" max="10" value="5"></div>
+<div class="config-row"><label>Validation Threshold:</label><input type="number" id="cfg-val-thresh" min="1" max="5" value="3"></div>
+<div class="config-row"><label>Scan Interval (seconds):</label><input type="number" id="cfg-scan-int" min="1" max="10" value="3"></div>
+<div class="config-row"><label>Proximity Alert (meters):</label><input type="number" id="cfg-prox-alert" min="1" max="50" value="5"></div>
+</div>
+<div class="config-section">
+<h3>MISSION PROFILE</h3>
+<div class="config-row">
+<label>Active Profile:</label>
+<select id="cfg-profile">
+<option value="perimeter">Perimeter Security</option>
+<option value="survey">Network Survey</option>
+<option value="hunting">Threat Hunting</option>
+<option value="training">Training Mode</option>
+</select>
+</div>
+</div>
+<div class="config-section">
+<h3>SYSTEM DIAGNOSTICS</h3>
+<div class="config-row"><label>Free Heap:</label><span id="diag-heap">--</span></div>
+<div class="config-row"><label>Temperature:</label><span id="diag-temp">--</span></div>
+<div class="config-row"><label>Scan Success Rate:</label><span id="diag-success">--</span></div>
+</div>
+<div class="config-section">
+<button onclick="saveConfiguration()" style="background:#003300;color:#0f0;border:1px solid #0f0;padding:10px 30px;cursor:pointer;font-family:inherit;font-size:14px">SAVE CONFIGURATION</button>
+<button onclick="exportSession()" style="background:#003300;color:#0ff;border:1px solid #0ff;padding:10px 30px;cursor:pointer;font-family:inherit;font-size:14px;margin-left:10px">EXPORT SESSION LOG</button>
+</div>
+</div>
+<div id="tags-view" class="view">
+<div id="add-tag-form">
+<h3 style="color:#0ff;margin-bottom:10px">ADD TAGGED CONTACT</h3>
+<input type="text" id="tag-name" placeholder="Name (e.g., Home Router)" style="width:200px">
+<input type="text" id="tag-pattern" placeholder="Pattern (e.g., Linksys* or *5G*)" style="width:250px">
+<select id="tag-color" style="width:120px">
+<option value="red">Red</option>
+<option value="orange">Orange</option>
+<option value="yellow">Yellow</option>
+<option value="green">Green</option>
+<option value="cyan">Cyan</option>
+<option value="blue">Blue</option>
+<option value="purple">Purple</option>
+<option value="magenta">Magenta</option>
+<option value="white">White</option>
+<option value="pink">Pink</option>
+</select>
+<label style="color:#0f0;margin-left:10px"><input type="checkbox" id="tag-sound" checked> Sound Alert</label>
+<button onclick="addTag()">ADD TAG</button>
+</div>
+<table id="tags-table">
+<thead><tr><th>NAME</th><th>PATTERN</th><th>COLOR</th><th>SOUND</th><th>ACTIONS</th></tr></thead>
+<tbody id="tags-tbody"></tbody>
+</table>
+</div>
+</div>
+<div style="background:rgba(0,51,0,0.3);padding:10px;border:1px solid #0f0;margin:10px 0">
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+<label style="color:#0f0;font:12px monospace;white-space:nowrap">SEARCH:</label>
+<input type="text" id="log-search" placeholder="Search logs..." style="flex:1;background:#001100;color:#0f0;border:1px solid #0f0;padding:5px;font:12px monospace" onkeyup="searchLog(event)">
+<button onclick="prevMatch()" style="background:#003300;color:#0f0;border:1px solid #0f0;padding:5px 15px;font:12px monospace;cursor:pointer">◀</button>
+<button onclick="nextMatch()" style="background:#003300;color:#0f0;border:1px solid #0f0;padding:5px 15px;font:12px monospace;cursor:pointer">▶</button>
+<span id="match-count" style="color:#0ff;font:12px monospace;min-width:80px"></span>
+</div>
+<div id="message-log" style="max-height:200px;overflow-y:auto;background:#000a00;padding:5px;border:1px solid #0f0"></div>
+</div>
+<div id="shortcuts-help">
+<div style="color:#0ff;font-weight:bold;margin-bottom:10px">KEYBOARD SHORTCUTS</div>
+<div>SPACE - Pause/Resume</div>
+<div>R - Reset Tracks</div>
+<div>T - Toggle Threat Overlay</div>
+<div>M - Mute/Unmute</div>
+<div>F - Fullscreen</div>
+<div>1-4 - Switch Tabs</div>
+<div>? - Toggle This Help</div>
+</div>
+<script>
+// Global state
+const tracks = new Map();
+const sessionLog = [];
+const signalHistory = new Map(); // Store signal history for graph
+let config = {trackHistory:5,validationThreshold:3,scanInterval:3,proximityAlert:5,missionProfile:'perimeter'};
+let taggedContacts = [];
+let isPaused = false;
+let isMuted = false;
+let scanCount = 0;
+let successCount = 0;
+let lastScanTime = 0;
+let totalUniqueSSIDs = new Set();
+let taggedWarning = null; // {ssid, name, timestamp}
+
+// Audio context for alerts
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playAlert(frequency = 600, duration = 200) {
+  if (isMuted) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.frequency.value = frequency;
+  gain.gain.value = 0.3;
+  osc.start();
+  setTimeout(() => osc.stop(), duration);
+}
+
+function logMessage(msg, type = 'normal') {
+  const log = document.getElementById('message-log');
+  const time = new Date().toLocaleTimeString();
+  const entry = document.createElement('div');
+  entry.className = 'log-entry log-' + type;
+  entry.textContent = `[${time}] ${msg}`;
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+  
+  sessionLog.push({timestamp: Date.now(), message: msg, type: type});
+  if (sessionLog.length > 1000) sessionLog.shift();
+}
+
+function matchesPattern(ssid, pattern) {
+  const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$', 'i');
+  return regex.test(ssid);
+}
+
+function getThreatLevel(track) {
+  for (const tag of taggedContacts) {
+    if (matchesPattern(track.ssid, tag.pattern)) {
+      return track.rssi > -50 ? 'hostile' : 'suspicious';
+    }
+  }
+  
+  const knownSSIDs = Array.from(tracks.values()).filter(t => t.isConfirmed).map(t => t.ssid);
+  const duplicates = knownSSIDs.filter(s => s === track.ssid).length;
+  if (duplicates > 1 && track.rssi > -40) return 'suspicious';
+  
+  if (track.history.length >= 3) {
+    const rssis = track.history.map(h => h.rssi);
+    const variance = rssis.reduce((sum, r) => sum + Math.pow(r - track.rssi, 2), 0) / rssis.length;
+    if (variance > 100) return 'suspicious';
+  }
+  
+  if (track.isConfirmed) {
+    return track.rssi > -60 ? 'neutral' : 'passive';
+  }
+  return 'neutral';
+}
+
+function estimateDistance(rssi) {
+  const txPower = -30;
+  const pathLossExp = 2.5;
+  const distance = Math.pow(10, (txPower - rssi) / (10 * pathLossExp));
+  return Math.max(0.1, Math.min(100, distance));
+}
+
+function updateHUD() {
+  const counts = {hostile:0, suspicious:0, neutral:0, friendly:0, passive:0};
+  tracks.forEach(track => {
+    if (track.isConfirmed) {
+      const threat = getThreatLevel(track);
+      counts[threat] = (counts[threat] || 0) + 1;
+    }
+  });
+  
+  document.getElementById('hud-total').textContent = tracks.size;
+  document.getElementById('hud-hostile').textContent = counts.hostile || 0;
+  document.getElementById('hud-suspicious').textContent = counts.suspicious || 0;
+  document.getElementById('hud-neutral').textContent = counts.neutral || 0;
+  document.getElementById('hud-friendly').textContent = counts.friendly || 0;
+  
+  const now = Date.now();
+  if (lastScanTime > 0) {
+    const elapsed = ((now - lastScanTime) / 1000).toFixed(1);
+    document.getElementById('hud-lastscan').textContent = elapsed + 's';
+  }
+}
+
+async function scanWiFi() {
+  if (isPaused) return;
+  
+  scanCount++;
+  try {
+    const resp = await fetch('/api/scan');
+    const data = await resp.json();
+    successCount++;
+    lastScanTime = Date.now();
+    
+    document.getElementById('diag-heap').textContent = (data.freeHeap / 1024).toFixed(1) + ' KB';
+    document.getElementById('diag-temp').textContent = data.temperature.toFixed(1) + ' °C';
+    document.getElementById('diag-success').textContent = ((successCount / scanCount) * 100).toFixed(1) + '%';
+    
+    const uptime = data.uptime;
+    const hours = Math.floor(uptime / 3600);
+    const mins = Math.floor((uptime % 3600) / 60);
+    const secs = uptime % 60;
+    document.getElementById('hud-uptime').textContent = 
+      String(hours).padStart(2,'0') + ':' + 
+      String(mins).padStart(2,'0') + ':' + 
+      String(secs).padStart(2,'0');
+    
+    const currentSSIDs = new Set();
+    const currentTime = Date.now();
+    
+    data.networks.forEach(net => {
+      currentSSIDs.add(net.bssid);
+      totalUniqueSSIDs.add(net.ssid);
+      
+      // Update signal history for graph
+      if (!signalHistory.has(net.bssid)) {
+        signalHistory.set(net.bssid, []);
+      }
+      const history = signalHistory.get(net.bssid);
+      history.push({rssi: net.rssi, timestamp: currentTime, ssid: net.ssid});
+      // Keep last 60 readings (about 3 minutes at 3s interval)
+      if (history.length > 60) history.shift();
+      
+      if (!tracks.has(net.bssid)) {
+        tracks.set(net.bssid, {
+          ssid: net.ssid,
+          rssi: net.rssi,
+          channel: net.channel,
+          bssid: net.bssid,
+          history: [],
+          firstSeen: Date.now(),
+          lastSeen: Date.now(),
+          validationCount: 1,
+          isConfirmed: false,
+          distance: estimateDistance(net.rssi)
+        });
+      } else {
+        const track = tracks.get(net.bssid);
+        track.rssi = net.rssi;
+        track.lastSeen = Date.now();
+        track.distance = estimateDistance(net.rssi);
+        
+        if (!track.isConfirmed) {
+          track.validationCount++;
+          if (track.validationCount >= config.validationThreshold) {
+            track.isConfirmed = true;
+            logMessage(`NEW TRANSPONDER IDENTIFIED: ${track.ssid} | RSSI: ${track.rssi} dBm | RNG: ${track.distance.toFixed(1)}m`, 'new');
+            
+            for (const tag of taggedContacts) {
+              if (matchesPattern(track.ssid, tag.pattern)) {
+                logMessage(`⚠ TAGGED CONTACT APPEARED: ${tag.name} (${track.ssid}) | RSSI: ${track.rssi} dBm`, 'tagged');
+                taggedWarning = {ssid: track.ssid, name: tag.name, timestamp: Date.now()};
+                if (tag.soundEnabled) {
+                  playAlert(800, 300);
+                  setTimeout(() => playAlert(800, 300), 400);
+                }
+                break;
+              }
+            }
+            
+            if (track.distance < config.proximityAlert) {
+              logMessage(`⚠ PROXIMITY ALERT: ${track.ssid} within ${track.distance.toFixed(1)}m`, 'tagged');
+              playAlert(1000, 200);
+            }
+          }
+        }
+        
+        track.history.push({rssi: track.rssi, timestamp: Date.now()});
+        if (track.history.length > config.trackHistory) {
+          track.history.shift();
+        }
+      }
+    });
+    
+    tracks.forEach((track, bssid) => {
+      if (!currentSSIDs.has(bssid)) {
+        const age = Date.now() - track.lastSeen;
+        if (age > 30000) {
+          logMessage(`TRANSPONDER LOST: ${track.ssid} | Last seen: ${new Date(track.lastSeen).toLocaleTimeString()}`, 'lost');
+          tracks.delete(bssid);
+          signalHistory.delete(bssid);
+        }
+      }
+    });
+    
+    updateHUD();
+    drawSignalGraph();
+    
+  } catch (e) {
+    console.error('Scan failed:', e);
+  }
+  
+  setTimeout(scanWiFi, config.scanInterval * 1000);
+}
+
+// Radar rendering with enhancements
+function drawRadar() {
+  const canvas = document.getElementById('radar-canvas');
+  const ctx = canvas.getContext('2d');
+  
+  canvas.width = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+  
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const radius = Math.min(cx, cy) - 80;
+  
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Draw range rings with glow
+  ctx.shadowBlur = 15;
+  ctx.shadowColor = '#0f0';
+  ctx.strokeStyle = '#003300';
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 4; i++) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * i / 4, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#0a0';
+    ctx.font = '10px monospace';
+    ctx.fillText((i * 25) + '%', cx + radius * i / 4 + 5, cy);
+    ctx.shadowBlur = 15;
+  }
+  
+  // Draw 8-slice azimuth lines with glow
+  ctx.strokeStyle = '#003300';
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * 45) * Math.PI / 180;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + radius * Math.cos(angle - Math.PI/2), cy + radius * Math.sin(angle - Math.PI/2));
+    ctx.stroke();
+  }
+  
+  ctx.shadowBlur = 0;
+  
+  // Draw azimuth markers (8 directions)
+  ctx.fillStyle = '#0f0';
+  ctx.font = '12px monospace';
+  const labels = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * 45) * Math.PI / 180;
+    const x = cx + (radius + 20) * Math.cos(angle - Math.PI/2);
+    const y = cy + (radius + 20) * Math.sin(angle - Math.PI/2);
+    ctx.fillText(labels[i], x - 10, y + 5);
+  }
+  
+  // Draw sweep line with enhanced glow
+  const sweepAngle = (Date.now() / 20) % 360;
+  ctx.shadowBlur = 30;
+  ctx.shadowColor = '#0f0';
+  ctx.strokeStyle = 'rgba(0,255,0,0.6)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  const sweepX = cx + radius * Math.cos((sweepAngle - 90) * Math.PI / 180);
+  const sweepY = cy + radius * Math.sin((sweepAngle - 90) * Math.PI / 180);
+  ctx.lineTo(sweepX, sweepY);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  
+  // Draw tracks
+  tracks.forEach(track => {
+    if (!track.isConfirmed) return;
+    
+    const normalizedRSSI = (track.rssi + 100) / 70;
+    const distFromCenter = radius * (1 - Math.max(0, Math.min(1, normalizedRSSI)));
+    
+    const hash = track.bssid.split(':').reduce((sum, byte) => sum + parseInt(byte, 16), 0);
+    const angle = (hash % 360) * Math.PI / 180;
+    
+    const x = cx + distFromCenter * Math.cos(angle);
+    const y = cy + distFromCenter * Math.sin(angle);
+    
+    const threat = getThreatLevel(track);
+    const colors = {hostile: '#f00', suspicious: '#f80', neutral: '#ff0', friendly: '#0f0', passive: '#888'};
+    const color = colors[threat] || '#0f0';
+    
+    if (track.history.length > 1) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      for (let i = 0; i < track.history.length; i++) {
+        const h = track.history[i];
+        const hNorm = (h.rssi + 100) / 70;
+        const hDist = radius * (1 - Math.max(0, Math.min(1, hNorm)));
+        const hx = cx + hDist * Math.cos(angle);
+        const hy = cy + hDist * Math.sin(angle);
+        if (i === 0) ctx.moveTo(hx, hy);
+        else ctx.lineTo(hx, hy);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    
+    for (let i = 0; i < track.history.length; i++) {
+      const h = track.history[i];
+      const age = track.history.length - i;
+      const opacity = 1 - (age / config.trackHistory) * 0.8;
+      const size = 8 - age;
+      
+      const hNorm = (h.rssi + 100) / 70;
+      const hDist = radius * (1 - Math.max(0, Math.min(1, hNorm)));
+      const hx = cx + hDist * Math.cos(angle);
+      const hy = cy + hDist * Math.sin(angle);
+      
+      ctx.fillStyle = color + Math.floor(opacity * 255).toString(16).padStart(2, '0');
+      ctx.beginPath();
+      ctx.arc(hx, hy, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    
+    if (threat === 'hostile') {
+      ctx.beginPath();
+      ctx.moveTo(x, y - 8);
+      ctx.lineTo(x - 7, y + 6);
+      ctx.lineTo(x + 7, y + 6);
+      ctx.closePath();
+      ctx.fill();
+    } else if (threat === 'friendly') {
+      ctx.fillRect(x - 6, y - 6, 12, 12);
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    ctx.fillStyle = color;
+    ctx.font = '10px monospace';
+    const bearing = Math.floor((angle * 180 / Math.PI + 90) % 360);
+    const label = `${track.ssid.substring(0, 15)} | ${track.rssi}dBm | BRG ${bearing}° RNG ${track.distance.toFixed(1)}m`;
+    ctx.fillText(label, x + 10, y - 10);
+  });
+  
+  // ASCII art corner displays
+  ctx.font = '14px monospace';
+  ctx.fillStyle = '#0f0';
+  
+  // Top left: Contact count
+  const contactCount = tracks.size;
+  const contactStr = 'CONTACTS: ' + String(contactCount).padStart(3, '0');
+  const contactWidth = contactStr.length + 2;
+  ctx.fillText('╔' + '═'.repeat(contactWidth) + '╗', 10, 20);
+  ctx.fillText('║ ' + contactStr + ' ║', 10, 35);
+  ctx.fillText('╚' + '═'.repeat(contactWidth) + '╝', 10, 50);
+  
+  // Bottom left: Unique SSIDs
+  const uniqueStr = 'UNIQUE: ' + String(totalUniqueSSIDs.size).padStart(5, '0');
+  const uniqueWidth = uniqueStr.length + 2;
+  ctx.fillText('╔' + '═'.repeat(uniqueWidth) + '╗', 10, canvas.height - 50);
+  ctx.fillText('║ ' + uniqueStr + ' ║', 10, canvas.height - 35);
+  ctx.fillText('╚' + '═'.repeat(uniqueWidth) + '╝', 10, canvas.height - 20);
+  
+  // Bottom right: Live time
+  const now = new Date();
+  const timeStr = 'TIME: ' + now.toLocaleTimeString();
+  const timeWidth = timeStr.length + 2;
+  const timeX = canvas.width - (timeWidth + 2) * 8.4 - 10;
+  ctx.fillText('╔' + '═'.repeat(timeWidth) + '╗', timeX, canvas.height - 50);
+  ctx.fillText('║ ' + timeStr + ' ║', timeX, canvas.height - 35);
+  ctx.fillText('╚' + '═'.repeat(timeWidth) + '╝', timeX, canvas.height - 20);
+  
+  // Top right: Tagged warning (if active)
+  if (taggedWarning && (Date.now() - taggedWarning.timestamp < 10000)) {
+    ctx.fillStyle = '#f00';
+    ctx.font = 'bold 16px monospace';
+    const warningLine1 = '⚠ TAGGED CONTACT ⚠';
+    const warningLine2 = taggedWarning.name.substring(0, 19);
+    const warningWidth = Math.max(warningLine1.length, warningLine2.length);
+    const warningX = canvas.width - (warningWidth + 4) * 9.6 - 10;
+    ctx.fillText('╔' + '═'.repeat(warningWidth + 2) + '╗', warningX, 20);
+    ctx.fillText('║ ' + warningLine1.padEnd(warningWidth, ' ') + ' ║', warningX, 40);
+    ctx.fillText('║ ' + warningLine2.padEnd(warningWidth, ' ') + ' ║', warningX, 60);
+    ctx.fillText('╚' + '═'.repeat(warningWidth + 2) + '╝', warningX, 80);
+  } else if (taggedWarning && (Date.now() - taggedWarning.timestamp >= 10000)) {
+    taggedWarning = null;
+  }
+  
+  if (document.getElementById('radar-view').classList.contains('active')) {
+    requestAnimationFrame(drawRadar);
+  }
+}
+
+// Fixed signal strength graph
+function drawSignalGraph() {
+  const canvas = document.getElementById('signal-canvas');
+  const ctx = canvas.getContext('2d');
+  
+  canvas.width = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+  
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // Get all current signal histories
+  const activeHistories = Array.from(signalHistory.entries())
+    .filter(([bssid, history]) => history.length > 0)
+    .slice(0, 7); // Limit to 7 for visibility
+  
+  if (activeHistories.length === 0) return;
+  
+  // Find min/max RSSI for dynamic scaling
+  let minRSSI = -100;
+  let maxRSSI = -30;
+  activeHistories.forEach(([bssid, history]) => {
+    history.forEach(h => {
+      minRSSI = Math.min(minRSSI, h.rssi);
+      maxRSSI = Math.max(maxRSSI, h.rssi);
+    });
+  });
+  
+  // Add padding
+  const padding = (maxRSSI - minRSSI) * 0.1 || 10;
+  minRSSI -= padding;
+  maxRSSI += padding;
+  
+  const leftMargin = 60;
+  const rightMargin = 20;
+  const topMargin = 30;
+  const bottomMargin = 40;
+  const graphWidth = canvas.width - leftMargin - rightMargin;
+  const graphHeight = canvas.height - topMargin - bottomMargin;
+  
+  // Draw grid
+  ctx.strokeStyle = '#003300';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 10; i++) {
+    const y = topMargin + graphHeight * i / 10;
+    ctx.beginPath();
+    ctx.moveTo(leftMargin, y);
+    ctx.lineTo(canvas.width - rightMargin, y);
+    ctx.stroke();
+  }
+  
+  // Y-axis labels
+  ctx.fillStyle = '#0f0';
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 10; i++) {
+    const rssi = maxRSSI - (maxRSSI - minRSSI) * i / 10;
+    const y = topMargin + graphHeight * i / 10;
+    ctx.fillText(rssi.toFixed(0) + ' dBm', leftMargin - 10, y + 4);
+  }
+  
+  // Title
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0ff';
+  ctx.font = 'bold 14px monospace';
+  ctx.fillText('SIGNAL STRENGTH OVER TIME', canvas.width / 2, 20);
+  
+  // X-axis label
+  ctx.fillStyle = '#0f0';
+  ctx.font = '11px monospace';
+  ctx.fillText('Time (last 60 readings)', canvas.width / 2, canvas.height - 10);
+  
+  // Draw signal lines
+  const colors = ['#0f0', '#0ff', '#ff0', '#f80', '#f0f', '#0af', '#fa0'];
+  
+  activeHistories.forEach(([bssid, history], idx) => {
+    const color = colors[idx % colors.length];
+    
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    
+    let started = false;
+    for (let i = 0; i < history.length; i++) {
+      const h = history[i];
+      const x = leftMargin + graphWidth * i / Math.max(1, history.length - 1);
+      const normalizedRSSI = (h.rssi - minRSSI) / (maxRSSI - minRSSI);
+      const y = topMargin + graphHeight * (1 - normalizedRSSI);
+      
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+    
+    // Legend
+    ctx.fillStyle = color;
+    ctx.textAlign = 'left';
+    ctx.font = '11px monospace';
+    const lastRSSI = history[history.length - 1].rssi;
+    const ssid = history[history.length - 1].ssid;
+    ctx.fillText(`${ssid.substring(0, 15)}: ${lastRSSI} dBm`, canvas.width - 220, topMargin + idx * 18);
+  });
+  
+  ctx.textAlign = 'left';
+}
+
+// Configuration
+async function loadConfig() {
+  const resp = await fetch('/api/config');
+  config = await resp.json();
+  
+  document.getElementById('cfg-track-hist').value = config.trackHistory;
+  document.getElementById('cfg-val-thresh').value = config.validationThreshold;
+  document.getElementById('cfg-scan-int').value = config.scanInterval;
+  document.getElementById('cfg-prox-alert').value = config.proximityAlert;
+  document.getElementById('cfg-profile').value = config.missionProfile;
+  document.getElementById('hud-profile').textContent = config.missionProfile.toUpperCase();
+}
+
+async function saveConfiguration() {
+  config.trackHistory = parseInt(document.getElementById('cfg-track-hist').value);
+  config.validationThreshold = parseInt(document.getElementById('cfg-val-thresh').value);
+  config.scanInterval = parseInt(document.getElementById('cfg-scan-int').value);
+  config.proximityAlert = parseInt(document.getElementById('cfg-prox-alert').value);
+  config.missionProfile = document.getElementById('cfg-profile').value;
+  
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(config)
+  });
+  
+  document.getElementById('hud-profile').textContent = config.missionProfile.toUpperCase();
+  logMessage('CONFIGURATION SAVED', 'normal');
+}
+
+// Tagged contacts
+async function loadTags() {
+  const resp = await fetch('/api/tags');
+  const data = await resp.json();
+  taggedContacts = data.tags;
+  
+  const tbody = document.getElementById('tags-tbody');
+  tbody.innerHTML = '';
+  
+  taggedContacts.forEach(tag => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${tag.name}</td>
+      <td>${tag.pattern}</td>
+      <td><span class="tag-color" style="background:${tag.color}"></span> ${tag.color}</td>
+      <td>${tag.sound ? 'Yes' : 'No'}</td>
+      <td><button class="btn-delete" onclick="deleteTag('${tag.name}')">DELETE</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function addTag() {
+  const name = document.getElementById('tag-name').value.trim();
+  const pattern = document.getElementById('tag-pattern').value.trim();
+  const color = document.getElementById('tag-color').value;
+  const sound = document.getElementById('tag-sound').checked;
+  
+  if (!name || !pattern) {
+    alert('Name and pattern are required');
+    return;
+  }
+  
+  await fetch('/api/tags', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, pattern, color, sound})
+  });
+  
+  document.getElementById('tag-name').value = '';
+  document.getElementById('tag-pattern').value = '';
+  
+  loadTags();
+  logMessage(`TAGGED CONTACT ADDED: ${name} (${pattern})`, 'normal');
+}
+
+async function deleteTag(name) {
+  await fetch('/api/tags', {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name})
+  });
+  
+  loadTags();
+  logMessage(`TAGGED CONTACT REMOVED: ${name}`, 'normal');
+}
+
+// Session export
+function exportSession() {
+  const data = {
+    timestamp: new Date().toISOString(),
+    config: config,
+    tags: taggedContacts,
+    tracks: Array.from(tracks.values()),
+    log: sessionLog,
+    signalHistory: Array.from(signalHistory.entries())
+  };
+  
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `widar-session-${Date.now()}.json`;
+  a.click();
+  
+  logMessage('SESSION LOG EXPORTED', 'normal');
+}
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.tab + '-view').classList.add('active');
+    
+    // Resume radar animation if switching to radar tab
+    if (tab.dataset.tab === 'radar') {
+      drawRadar();
+    }
+  });
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === ' ') {
+    e.preventDefault();
+    isPaused = !isPaused;
+    logMessage(isPaused ? 'SCANNING PAUSED' : 'SCANNING RESUMED', 'normal');
+  } else if (e.key === 'r' || e.key === 'R') {
+    tracks.clear();
+    signalHistory.clear();
+    logMessage('ALL TRACKS RESET', 'normal');
+  } else if (e.key === 'm' || e.key === 'M') {
+    isMuted = !isMuted;
+    logMessage(isMuted ? 'AUDIO MUTED' : 'AUDIO UNMUTED', 'normal');
+  } else if (e.key === 'f' || e.key === 'F') {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+    } else {
+      document.exitFullscreen();
+    }
+  } else if (e.key >= '1' && e.key <= '4') {
+    const tabs = ['radar', 'signal', 'config', 'tags'];
+    const tab = document.querySelector(`.tab[data-tab="${tabs[e.key - 1]}"]`);
+    if (tab) tab.click();
+  } else if (e.key === '?') {
+    const help = document.getElementById('shortcuts-help');
+    help.classList.toggle('show');
+  }
+});
+
+// Initialize
+loadConfig();
+loadTags();
+scanWiFi();
+drawRadar();
+logMessage('SPEC5 WI-DAR SYSTEM INITIALIZED', 'normal');
+logMessage('TACTICAL WIFI TRACKING ACTIVE', 'normal');
+
+// Log search functionality
+let searchMatches = [];
+let currentMatchIndex = -1;
+
+function searchLog(event) {
+  const searchTerm = document.getElementById('log-search').value.toLowerCase();
+  const logMessages = document.getElementById('message-log');
+  const messages = logMessages.querySelectorAll('.log-entry');
+  
+  messages.forEach(msg => {
+    msg.style.backgroundColor = '';
+    msg.style.border = '';
+  });
+  
+  searchMatches = [];
+  currentMatchIndex = -1;
+  
+  if (searchTerm === '') {
+    document.getElementById('match-count').textContent = '';
+    return;
+  }
+  
+  messages.forEach((msg, index) => {
+    if (msg.textContent.toLowerCase().includes(searchTerm)) {
+      searchMatches.push(index);
+    }
+  });
+  
+  if (searchMatches.length > 0) {
+    document.getElementById('match-count').textContent = `${searchMatches.length} match${searchMatches.length > 1 ? 'es' : ''}`;
+    currentMatchIndex = 0;
+    highlightMatch();
+  } else {
+    document.getElementById('match-count').textContent = 'No matches';
+  }
+  
+  if (event.key === 'Enter' && searchMatches.length > 0) {
+    nextMatch();
+  }
+}
+
+function highlightMatch() {
+  if (currentMatchIndex < 0 || currentMatchIndex >= searchMatches.length) return;
+  
+  const logMessages = document.getElementById('message-log');
+  const messages = logMessages.querySelectorAll('.log-entry');
+  
+  messages.forEach(msg => {
+    msg.style.backgroundColor = '';
+    msg.style.border = '';
+  });
+  
+  const matchIndex = searchMatches[currentMatchIndex];
+  const matchedMsg = messages[matchIndex];
+  matchedMsg.style.backgroundColor = 'rgba(0,255,0,0.2)';
+  matchedMsg.style.border = '1px solid #0f0';
+  matchedMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  
+  document.getElementById('match-count').textContent = `${currentMatchIndex + 1} of ${searchMatches.length}`;
+}
+
+function nextMatch() {
+  if (searchMatches.length === 0) return;
+  currentMatchIndex = (currentMatchIndex + 1) % searchMatches.length;
+  highlightMatch();
+}
+
+function prevMatch() {
+  if (searchMatches.length === 0) return;
+  currentMatchIndex = (currentMatchIndex - 1 + searchMatches.length) % searchMatches.length;
+  highlightMatch();
+}
+
+</script>
+</body>
+</html>
+)html");
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  loadConfig();
+
+  WiFi.mode(WIFI_MODE_AP);
+  WiFi.softAP(ssid, password);
+  
+  Serial.println("Wi-Dar AP started");
+  Serial.print("IP: ");
+  Serial.println(WiFi.softAPIP());
+  
+  server.on("/", handleRoot);
+  server.on("/api/scan", handleScanAPI);
+  server.on("/api/config", HTTP_GET, handleConfigAPI);
+  server.on("/api/config", HTTP_POST, handleConfigAPI);
+  server.on("/api/tags", HTTP_GET, handleTagsAPI);
+  server.on("/api/tags", HTTP_POST, handleTagsAPI);
+  server.on("/api/tags", HTTP_DELETE, handleTagsAPI);
+  
+  server.begin();
+  Serial.println("Server started");
+}
+
+void loop() {
+  server.handleClient();
+}
