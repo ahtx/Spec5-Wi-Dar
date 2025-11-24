@@ -228,6 +228,20 @@ body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hid
 .log-stable{border-left-color:#0f0}
 #shortcuts-help{position:fixed;top:100px;right:20px;background:rgba(0,20,0,0.9);border:2px solid #0f0;padding:15px;display:none;z-index:2000;font-size:11px}
 #shortcuts-help.show{display:block}
+@media (max-width:768px){
+#hud{padding:0 10px;gap:10px}
+#hud-left{gap:15px}
+#hud-right{gap:10px;font-size:10px}
+.hud-label{font-size:8px}
+.hud-value{font-size:14px}
+#content{bottom:160px}
+#message-log{height:160px;padding:5px}
+.config-row{flex-direction:column;align-items:stretch;gap:5px}
+.config-row label{margin-bottom:3px}
+.config-row input,.config-row select{width:100%}
+#log-search{min-width:0 !important}
+#match-count{min-width:60px !important;font-size:10px}
+}
 </style>
 </head>
 <body>
@@ -316,7 +330,7 @@ body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hid
 </table>
 </div>
 </div>
-<div style="background:rgba(0,51,0,0.3);padding:10px;border:1px solid #0f0;margin:10px 0">
+<div style="background:rgba(0,51,0,0.3);padding:8px;border:1px solid #0f0;margin:10px 5px">
 <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
 <label style="color:#0f0;font:12px monospace;white-space:nowrap">SEARCH:</label>
 <input type="text" id="log-search" placeholder="Search logs..." style="flex:1;background:#001100;color:#0f0;border:1px solid #0f0;padding:5px;font:12px monospace" onkeyup="searchLog(event)">
@@ -324,7 +338,7 @@ body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hid
 <button onclick="nextMatch()" style="background:#003300;color:#0f0;border:1px solid #0f0;padding:5px 15px;font:12px monospace;cursor:pointer">▶</button>
 <span id="match-count" style="color:#0ff;font:12px monospace;min-width:80px"></span>
 </div>
-<div id="message-log" style="max-height:200px;overflow-y:auto;background:#000a00;padding:5px;border:1px solid #0f0"></div>
+<div id="message-log" style="max-height:200px;overflow-y:auto;background:#000a00;padding:8px;border:1px solid #0f0;box-sizing:border-box"></div>
 </div>
 <div id="shortcuts-help">
 <div style="color:#0ff;font-weight:bold;margin-bottom:10px">KEYBOARD SHORTCUTS</div>
