@@ -229,30 +229,36 @@ body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hid
 #shortcuts-help{position:fixed;top:100px;right:20px;background:rgba(0,20,0,0.9);border:2px solid #0f0;padding:15px;display:none;z-index:2000;font-size:11px}
 #shortcuts-help.show{display:block}
 @media (max-width:768px){
-#hud{padding:0 10px;gap:10px}
-#hud-left{gap:15px}
-#hud-right{gap:10px;font-size:10px}
-.hud-label{font-size:8px}
-.hud-value{font-size:14px}
+#hud{padding:0 5px;gap:5px;height:45px}
+#hud-left{gap:8px;flex-wrap:nowrap;overflow-x:auto}
+#hud-right{gap:5px;font-size:9px}
+.mobile-hide{display:none !important}
+.hud-label{font-size:7px}
+.hud-value{font-size:11px}
+#hud-uptime{font-size:10px}
 #content{bottom:160px}
-#message-log{height:160px;padding:5px}
+#message-log{height:160px;padding:8px;margin:0 !important;border-left:2px solid #0f0 !important}
 .config-row{flex-direction:column;align-items:stretch;gap:5px}
 .config-row label{margin-bottom:3px}
 .config-row input,.config-row select{width:100%}
 #log-search{min-width:0 !important}
-#match-count{min-width:60px !important;font-size:10px}
+#match-count{display:none}
+#log-container{margin:5px 2px !important;padding:5px !important;border:2px solid #0f0 !important}
+.logo-text{font-size:14px !important}
+.logo-text sup{font-size:14px !important}
+.logo-subtext{font-size:14px !important}
 }
 </style>
 </head>
 <body>
 <div id="hud">
 <div id="hud-left">
-<div style="display:flex;align-items:center;gap:10px"><span style="font-family:'Kommon Grotesk Extended Heavy',sans-serif;font-size:18px;font-weight:900;color:#0f0;line-height:1">spec<sup style="font-size:18px;vertical-align:top;position:relative;top:-2px">5</sup></span><span style="font-size:18px;font-weight:bold;color:#0ff;white-space:nowrap">WI-DAR</span></div>
+<div style="display:flex;align-items:center;gap:10px"><span class="logo-text" style="font-family:'Kommon Grotesk Extended Heavy',sans-serif;font-size:18px;font-weight:900;color:#0f0;line-height:1">spec<sup style="font-size:18px;vertical-align:top;position:relative;top:-2px">5</sup></span><span class="logo-subtext" style="font-size:18px;font-weight:bold;color:#0ff;white-space:nowrap">WI-DAR</span></div>
 <div class="hud-stat"><span class="hud-label">CONTACTS</span><span class="hud-value" id="hud-total">0</span></div>
 <div class="hud-stat"><span class="hud-label threat-hostile">HOSTILE</span><span class="hud-value threat-hostile" id="hud-hostile">0</span></div>
 <div class="hud-stat"><span class="hud-label threat-suspicious">SUSPICIOUS</span><span class="hud-value threat-suspicious" id="hud-suspicious">0</span></div>
-<div class="hud-stat"><span class="hud-label threat-neutral">NEUTRAL</span><span class="hud-value threat-neutral" id="hud-neutral">0</span></div>
-<div class="hud-stat"><span class="hud-label threat-friendly">FRIENDLY</span><span class="hud-value threat-friendly" id="hud-friendly">0</span></div>
+<div class="hud-stat mobile-hide"><span class="hud-label threat-neutral">NEUTRAL</span><span class="hud-value threat-neutral" id="hud-neutral">0</span></div>
+<div class="hud-stat mobile-hide"><span class="hud-label threat-friendly">FRIENDLY</span><span class="hud-value threat-friendly" id="hud-friendly">0</span></div>
 </div>
 <div id="hud-right">
 <div class="hud-stat"><span class="hud-label">UPTIME</span><span class="hud-value" id="hud-uptime">00:00:00</span></div>
@@ -330,7 +336,7 @@ body{background:#000;color:#0f0;font-family:'Courier New',monospace;overflow:hid
 </table>
 </div>
 </div>
-<div style="background:rgba(0,51,0,0.3);padding:8px;border:1px solid #0f0;margin:10px 5px">
+<div id="log-container" style="background:rgba(0,51,0,0.3);padding:8px;border:1px solid #0f0;margin:10px 5px">
 <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
 <label style="color:#0f0;font:12px monospace;white-space:nowrap">SEARCH:</label>
 <input type="text" id="log-search" placeholder="Search logs..." style="flex:1;background:#001100;color:#0f0;border:1px solid #0f0;padding:5px;font:12px monospace" onkeyup="searchLog(event)">
